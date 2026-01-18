@@ -1,0 +1,23 @@
+{
+  "name": "zanta-md-elite",
+  "version": "2.0.0",
+  "description": "ZANTA-MD Elite Edition with Web Dashboard",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "baileys-elite": "latest",
+    "express": "^4.19.2",
+    "mongoose": "^7.6.14",
+    "pino": "^8.21.0",
+    "axios": "^1.13.2",
+    "fs-extra": "^11.2.0",
+    "path": "latest",
+    "dotenv": "^17.2.3"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
