@@ -4,13 +4,14 @@ const {
     DisconnectReason,
     getContentType,
     Browsers
-} = require("baileys-elite"); // ✅ Anju-XPro Engine
+} = require("baileys-elite");
 
 const fs = require("fs-extra");
 const P = require("pino");
 const express = require("express");
 const path = require("path");
 const mongoose = require("mongoose");
+const bodyParser = require("body-parser");
 const config = require("./config");
 const { sms } = require("./lib/msg");
 const { getGroupAdmins } = require("./lib/functions");
@@ -19,7 +20,7 @@ const { connectDB, getBotSettings, updateSetting } = require("./plugins/bot_db")
 
 const activeSockets = new Set();
 global.BOT_SESSIONS_CONFIG = {};
-const port = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8000;
 
 // --- 📦 MongoDB Session Schema ---
 const SessionSchema = new mongoose.Schema({
@@ -38,13 +39,24 @@ const decodeJid = (jid) => {
 };
 
 const app = express();
-app.use(express.static(path.join(__dirname, 'web'))); // 🌐 Serving Website Files
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'web'))); // සයිට් එකේ CSS/JS වලට
 
-// --- 🚀 Core System Startup ---
+// --- 🌐 Pair Logic ---
+// ඔයාගේ පරණ 'pair.js' එක මේ project එක ඇතුළට අරන් මෙතනින් link කරන්න
+let codeRouter = require('./pair'); 
+app.use('/code', codeRouter);
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'pair.html'));
+});
+
+// --- 🚀 Core Bot System ---
 async function startSystem() {
     await connectDB();
     
-    // Load Plugins
+    // Plugins Load කිරීම
     const pluginsPath = path.join(__dirname, "plugins");
     if (fs.existsSync(pluginsPath)) {
         fs.readdirSync(pluginsPath).forEach((plugin) => {
@@ -55,17 +67,19 @@ async function startSystem() {
     }
     console.log(`✨ Loaded: ${commands.length} Commands`);
 
-    // Load Sessions from DB
+    // DB එකෙන් පරණ Sessions load කර connect කිරීම
     const allSessions = await Session.find({});
     console.log(`📂 Total sessions: ${allSessions.length}. Connecting...`);
-
     for (let sessionData of allSessions) {
         await connectToWA(sessionData);
     }
 
-    // DB එකට අලුත් Session එකක් ආවොත් Auto Connect වීම
+    // ⚡ වැදගත්ම කොටස: සයිට් එකෙන් කවුරුහරි අලුතින් scan කළොත් ඒ වෙලාවෙම connect වීම
     Session.watch().on('change', async (data) => {
-        if (data.operationType === 'insert') await connectToWA(data.fullDocument);
+        if (data.operationType === 'insert') {
+            console.log("🆕 New session detected! Connecting...");
+            await connectToWA(data.fullDocument);
+        }
     });
 }
 
@@ -74,7 +88,6 @@ async function connectToWA(sessionData) {
     global.BOT_SESSIONS_CONFIG[userNumber] = await getBotSettings(userNumber);
     let userSettings = global.BOT_SESSIONS_CONFIG[userNumber];
 
-    // Auth Folder Management
     const authPath = path.join(__dirname, `./auth/${userNumber}/`);
     await fs.ensureDir(authPath);
     await fs.writeJSON(path.join(authPath, "creds.json"), sessionData.creds);
@@ -87,7 +100,6 @@ async function connectToWA(sessionData) {
         browser: Browsers.ubuntu("Chrome"),
         auth: state,
         syncFullHistory: false,
-        // ✅ Elite Features Patch (Buttons & AI Icon)
         patchMessageBeforeSending: (message) => {
             const requiresPatch = !!(message.buttonsMessage || message.templateMessage || message.listMessage || message.interactiveMessage);
             if (requiresPatch) {
@@ -101,7 +113,6 @@ async function connectToWA(sessionData) {
 
     zanta.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
-        
         if (connection === "close") {
             activeSockets.delete(zanta);
             const reason = lastDisconnect?.error?.output?.statusCode;
@@ -113,11 +124,10 @@ async function connectToWA(sessionData) {
             }
         } else if (connection === "open") {
             console.log(`✅ [${userNumber}] Connected via Elite Engine`);
-            
             if (userSettings?.connectionMsg === 'true') {
                 await zanta.sendMessage(decodeJid(zanta.user.id), {
                     text: `*${userSettings.botName || 'ZANTA-MD'}* is Online 🤖`,
-                    ai: true // 👈 Elite AI Icon
+                    ai: true 
                 });
             }
         }
@@ -128,22 +138,17 @@ async function connectToWA(sessionData) {
     zanta.ev.on("messages.upsert", async ({ messages }) => {
         const mek = messages[0];
         if (!mek || !mek.message) return;
-
         userSettings = global.BOT_SESSIONS_CONFIG[userNumber];
         const from = mek.key.remoteJid;
         const type = getContentType(mek.message);
         const body = (type === "conversation") ? mek.message.conversation : (mek.message[type]?.text || mek.message[type]?.caption || "");
-        
         const prefix = userSettings?.prefix || ".";
         const isCmd = body.startsWith(prefix);
-        const sender = mek.key.fromMe ? zanta.user.id : (mek.key.participant || mek.key.remoteJid);
 
-        // Auto Status Seen
         if (from === "status@broadcast" && userSettings?.autoStatusSeen === 'true') {
             await zanta.readMessages([mek.key]);
             return;
         }
-
         if (!isCmd) return;
 
         const m = sms(zanta, mek);
@@ -156,21 +161,16 @@ async function connectToWA(sessionData) {
             try {
                 await cmd.function(zanta, mek, m, {
                     from, body, isCmd, command: commandName, args, q: args.join(" "),
-                    sender, reply, prefix, userSettings
+                    reply, prefix, userSettings
                 });
             } catch (e) { console.error(e); }
         }
     });
 }
 
-// --- 🌐 Server Routes ---
-app.get("/api/stats", (req, res) => {
-    res.json({
-        activeSessions: activeSockets.size,
-        totalCommands: commands.length,
-        status: "Running"
-    });
-});
-
+// Startup
 startSystem();
-app.listen(port, () => console.log(`🌍 Dashboard & Bot running on port ${port}`));
+
+app.listen(PORT, () => {
+    console.log(`🚀 ZANTA-MD Server & Site started on port ${PORT}`);
+});
